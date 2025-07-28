@@ -91,7 +91,7 @@ app.post('/api/ticket', async (req, res) => {
           title: article.title,
           url: article.html_url,
           score: article.score,
-          snippet: article.body ? article.body.substring(0, 150) + '...' : '',
+          snippet: stripHtmlAndCreateSnippet(article.body, 150),
           section_id: article.section_id,
           locale: article.locale
         }));
@@ -344,7 +344,7 @@ app.post('/api/search-help-center', async (req, res) => {
     const articles = searchResponse.data.results.map(article => ({
       id: article.id,
       title: article.title || 'Untitled Article',
-      body: article.body ? (article.body.substring(0, 200) + '...') : 'No preview available',
+      body: stripHtmlAndCreateSnippet(article.body, 200),
       url: article.html_url,
       section_id: article.section_id,
       category_id: article.category_id,
@@ -623,6 +623,49 @@ function isValidSearchQuery(query) {
   }
   
   return true;
+}
+
+/**
+ * Strips HTML tags and cleans up text for display
+ * Converts HTML content to clean, readable text snippets
+ * 
+ * @param {string} htmlText - Raw HTML text content
+ * @param {number} maxLength - Maximum length of returned snippet
+ * @returns {string} Clean text snippet without HTML tags
+ */
+function stripHtmlAndCreateSnippet(htmlText, maxLength = 150) {
+  if (!htmlText || typeof htmlText !== 'string') {
+    return 'No preview available';
+  }
+  
+  // Remove HTML tags
+  let cleanText = htmlText
+    .replace(/<[^>]*>/g, ' ')           // Remove all HTML tags
+    .replace(/&nbsp;/g, ' ')           // Replace non-breaking spaces
+    .replace(/&amp;/g, '&')            // Replace HTML entities
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')              // Replace multiple spaces with single space
+    .trim();                           // Remove leading/trailing whitespace
+  
+  // Truncate to desired length and add ellipsis if needed
+  if (cleanText.length > maxLength) {
+    // Try to break at word boundary
+    const truncated = cleanText.substring(0, maxLength);
+    const lastSpaceIndex = truncated.lastIndexOf(' ');
+    
+    if (lastSpaceIndex > maxLength * 0.7) {
+      // If we can break at a word boundary reasonably close to the end
+      cleanText = truncated.substring(0, lastSpaceIndex) + '...';
+    } else {
+      // Otherwise just truncate at character boundary
+      cleanText = truncated + '...';
+    }
+  }
+  
+  return cleanText || 'No preview available';
 }
 
 /**
