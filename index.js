@@ -43,13 +43,14 @@ const AUTH = Buffer.from(`${process.env.ZENDESK_EMAIL}/token:${process.env.ZENDE
  */
 app.post('/api/ticket', async (req, res) => {
   try {
-    const { message, user, searchQuery, performSearch = true } = req.body;
+    const { message, user, searchQuery, performSearch = true, skipTicketIfResults = false } = req.body;
     
     console.log(`📨 Incoming ticket request:`, {
       message: message?.substring(0, 100) + '...',
       user,
       searchQuery,
       performSearch,
+      skipTicketIfResults,
       hasSearchQuery: !!searchQuery
     });
     
@@ -96,6 +97,28 @@ app.post('/api/ticket', async (req, res) => {
         }));
         
         console.log(`✅ Federated search found ${searchResults.length} relevant articles`);
+        
+        // Check if we should skip ticket creation based on search results
+        if (skipTicketIfResults && searchResults.length > 0) {
+          console.log(`🚫 Skipping ticket creation - found ${searchResults.length} search results`);
+          
+          // Return search results without creating a ticket
+          return res.json({
+            ticketId: null,
+            requesterId: null,
+            searchResults: searchResults,
+            searchPerformed: true,
+            searchQuery: searchQuery,
+            searchError: null,
+            ticketSkipped: true,
+            reason: 'Found relevant help articles',
+            timestamp: new Date().toISOString(),
+            features: {
+              federatedSearch: true,
+              conditionalTicketCreation: true
+            }
+          });
+        }
         
       } catch (searchErr) {
         // Log search failure but continue with ticket creation
