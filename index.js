@@ -393,8 +393,16 @@ app.post('/api/ticket/:id/comment', async (req, res) => {
     const { id } = req.params;
     const { message, userToken, user } = req.body;
 
+    console.log(`💬 Adding comment to ticket #${id}:`, {
+      hasMessage: !!message,
+      hasUserToken: !!userToken,
+      user: user || 'undefined',
+      messagePreview: message?.substring(0, 50) + '...'
+    });
+
     if (userToken) {
       // End-user comment via Requests API
+      console.log(`👤 Adding end-user comment via Requests API`);
       const response = await axios.post(
         `${ZENDESK_BASE}/requests/${id}/comments.json`,
         { comment: { body: message, public: true } },
@@ -405,9 +413,11 @@ app.post('/api/ticket/:id/comment', async (req, res) => {
           }
         }
       );
+      console.log(`✅ End-user comment added successfully`);
       return res.json({ success: true, comment: response.data.comment });
     } else {
       // Agent/admin comment via Tickets API
+      console.log(`🏢 Adding admin comment via Tickets API`);
       const response = await axios.post(
         `${ZENDESK_BASE}/tickets/${id}/comments.json`,
         { ticket: { comment: { body: message, public: true } } },
@@ -418,11 +428,20 @@ app.post('/api/ticket/:id/comment', async (req, res) => {
           }
         }
       );
+      console.log(`✅ Admin comment added successfully`);
       return res.json({ success: true, comment: response.data.comment });
     }
   } catch (err) {
-    console.error(err.response?.data || err.message);
-    res.status(500).json({ error: err.message });
+    console.error(`❌ Failed to add comment to ticket #${req.params.id}:`, {
+      error: err.message,
+      status: err.response?.status,
+      statusText: err.response?.statusText,
+      data: err.response?.data
+    });
+    res.status(500).json({ 
+      error: err.message,
+      details: err.response?.data || 'Comment posting failed'
+    });
   }
 });
 
@@ -430,6 +449,8 @@ app.post('/api/ticket/:id/comment', async (req, res) => {
 app.get('/api/ticket/:id/comments', async (req, res) => {
   try {
     const { id } = req.params;
+    
+    console.log(`📥 Fetching comments for ticket #${id}`);
 
     // Fetch comments
     const commentsResponse = await axios.get(
@@ -442,6 +463,8 @@ app.get('/api/ticket/:id/comments', async (req, res) => {
       }
     );
 
+    console.log(`✅ Retrieved ${commentsResponse.data.comments?.length || 0} comments for ticket #${id}`);
+
     // Fetch ticket details to get requester_id
     const ticketResponse = await axios.get(
       `${ZENDESK_BASE}/tickets/${id}.json`,
@@ -452,13 +475,23 @@ app.get('/api/ticket/:id/comments', async (req, res) => {
       }
     );
 
+    console.log(`✅ Retrieved ticket details for #${id}, requester: ${ticketResponse.data.ticket.requester_id}`);
+
     res.json({
       comments: commentsResponse.data.comments,
       requester_id: ticketResponse.data.ticket.requester_id
     });
   } catch (err) {
-    console.error(err.response?.data || err.message);
-    res.status(500).json({ error: err.message });
+    console.error(`❌ Failed to fetch comments for ticket #${req.params.id}:`, {
+      error: err.message,
+      status: err.response?.status,
+      statusText: err.response?.statusText,
+      data: err.response?.data
+    });
+    res.status(500).json({ 
+      error: err.message,
+      details: err.response?.data || 'Failed to fetch comments'
+    });
   }
 });
 
