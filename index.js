@@ -750,6 +750,7 @@ app.listen(PORT, () => {
    POST /api/ticket                 - Create ticket (with optional search)
    POST /api/search-help-center     - Search Help Center articles  
    POST /api/ticket/:id/comment     - Add comment to ticket
+   POST /api/ticket/:id/private-comment - Add private comment to ticket
    GET  /api/ticket/:id/comments    - Get ticket comments
    POST /api/ticket/:id/solve       - Close/solve ticket
 
