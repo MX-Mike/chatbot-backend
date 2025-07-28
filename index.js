@@ -534,6 +534,32 @@ app.post('/api/ticket/:id/solve', async (req, res) => {
 
 const PORT = process.env.PORT || 4000;
 
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    service: 'ChatbotMX Backend',
+    version: '1.0.0'
+  });
+});
+
+// Root endpoint for basic connectivity test
+app.get('/', (req, res) => {
+  res.json({ 
+    message: 'ChatbotMX Backend API',
+    status: 'Running',
+    endpoints: [
+      'POST /api/ticket - Create ticket with optional search',
+      'POST /api/search-help-center - Search Help Center articles',
+      'POST /api/ticket/:id/comment - Add comment to ticket',
+      'GET /api/ticket/:id/comments - Get ticket comments',
+      'POST /api/ticket/:id/solve - Close/solve ticket',
+      'GET /health - Health check'
+    ]
+  });
+});
+
 /**
  * UTILITY FUNCTIONS FOR FEDERATED SEARCH
  * Helper functions to support search functionality
