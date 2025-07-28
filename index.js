@@ -445,6 +445,107 @@ app.post('/api/ticket/:id/comment', async (req, res) => {
   }
 });
 
+// Add a private comment to a ticket (internal notes for agents)
+app.post('/api/ticket/:id/private-comment', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { message, append = true } = req.body;
+    
+    console.log(`🔒 Adding private comment to ticket #${id}:`, {
+      messageLength: message?.length || 0,
+      append: append
+    });
+
+    if (!message || typeof message !== 'string') {
+      return res.status(400).json({ error: 'Message is required and must be a string' });
+    }
+
+    // First, check if ticket has existing private comments to append to
+    let finalMessage = message;
+    
+    if (append) {
+      try {
+        // Get current ticket details to check for existing private comments
+        const ticketResponse = await axios.get(
+          `${ZENDESK_BASE}/tickets/${id}.json`,
+          {
+            headers: {
+              Authorization: `Basic ${AUTH}`
+            }
+          }
+        );
+        
+        const existingDescription = ticketResponse.data.ticket.description;
+        const privateCommentMarker = '\n\n--- PRIVATE AGENT NOTES ---\n';
+        
+        // Check if there are already private comments in the description
+        if (existingDescription && existingDescription.includes(privateCommentMarker)) {
+          // Extract existing private notes
+          const parts = existingDescription.split(privateCommentMarker);
+          const originalDescription = parts[0];
+          const existingPrivateNotes = parts[1] || '';
+          
+          // Append new comment to existing private notes
+          const timestamp = new Date().toLocaleString();
+          finalMessage = `${originalDescription}${privateCommentMarker}${existingPrivateNotes}\n[${timestamp}] ${message}`;
+        } else {
+          // First private comment - add marker and comment
+          const timestamp = new Date().toLocaleString();
+          finalMessage = `${existingDescription}${privateCommentMarker}[${timestamp}] ${message}`;
+        }
+        
+        console.log(`📝 Appending to existing private comments in ticket description`);
+        
+      } catch (error) {
+        console.warn(`⚠️ Could not fetch existing ticket for appending, adding new private comment:`, error.message);
+        // Fallback to just the new message
+        const timestamp = new Date().toLocaleString();
+        finalMessage = `--- PRIVATE AGENT NOTES ---\n[${timestamp}] ${message}`;
+      }
+    }
+
+    // Update ticket description with private comment
+    const response = await axios.put(
+      `${ZENDESK_BASE}/tickets/${id}.json`,
+      { 
+        ticket: { 
+          description: finalMessage,
+          // Ensure private comments don't change ticket status
+          comment: {
+            body: `[PRIVATE] ${message}`,
+            public: false  // This makes it a private/internal comment
+          }
+        } 
+      },
+      {
+        headers: {
+          Authorization: `Basic ${AUTH}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    console.log(`✅ Private comment added successfully to ticket #${id}`);
+    res.json({ 
+      success: true, 
+      message: 'Private comment added successfully',
+      commentAdded: message
+    });
+    
+  } catch (err) {
+    console.error(`❌ Failed to add private comment to ticket #${req.params.id}:`, {
+      error: err.message,
+      status: err.response?.status,
+      statusText: err.response?.statusText,
+      data: err.response?.data
+    });
+    res.status(500).json({ 
+      error: err.message,
+      details: err.response?.data || 'Private comment posting failed'
+    });
+  }
+});
+
 // Get comments for a ticket + return requester_id
 app.get('/api/ticket/:id/comments', async (req, res) => {
   try {
