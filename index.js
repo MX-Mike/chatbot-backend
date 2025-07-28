@@ -460,59 +460,17 @@ app.post('/api/ticket/:id/private-comment', async (req, res) => {
       return res.status(400).json({ error: 'Message is required and must be a string' });
     }
 
-    // First, check if ticket has existing private comments to append to
-    let finalMessage = message;
-    
-    if (append) {
-      try {
-        // Get current ticket details to check for existing private comments
-        const ticketResponse = await axios.get(
-          `${ZENDESK_BASE}/tickets/${id}.json`,
-          {
-            headers: {
-              Authorization: `Basic ${AUTH}`
-            }
-          }
-        );
-        
-        const existingDescription = ticketResponse.data.ticket.description;
-        const privateCommentMarker = '\n\n--- PRIVATE AGENT NOTES ---\n';
-        
-        // Check if there are already private comments in the description
-        if (existingDescription && existingDescription.includes(privateCommentMarker)) {
-          // Extract existing private notes
-          const parts = existingDescription.split(privateCommentMarker);
-          const originalDescription = parts[0];
-          const existingPrivateNotes = parts[1] || '';
-          
-          // Append new comment to existing private notes
-          const timestamp = new Date().toLocaleString();
-          finalMessage = `${originalDescription}${privateCommentMarker}${existingPrivateNotes}\n[${timestamp}] ${message}`;
-        } else {
-          // First private comment - add marker and comment
-          const timestamp = new Date().toLocaleString();
-          finalMessage = `${existingDescription}${privateCommentMarker}[${timestamp}] ${message}`;
-        }
-        
-        console.log(`📝 Appending to existing private comments in ticket description`);
-        
-      } catch (error) {
-        console.warn(`⚠️ Could not fetch existing ticket for appending, adding new private comment:`, error.message);
-        // Fallback to just the new message
-        const timestamp = new Date().toLocaleString();
-        finalMessage = `--- PRIVATE AGENT NOTES ---\n[${timestamp}] ${message}`;
-      }
-    }
+    // Add timestamp to the message
+    const timestamp = new Date().toLocaleString();
+    const timestampedMessage = `[${timestamp}] ${message}`;
 
-    // Update ticket description with private comment
-    const response = await axios.put(
-      `${ZENDESK_BASE}/tickets/${id}.json`,
+    // Add a private comment using Zendesk's comment API
+    const response = await axios.post(
+      `${ZENDESK_BASE}/tickets/${id}/comments.json`,
       { 
         ticket: { 
-          description: finalMessage,
-          // Ensure private comments don't change ticket status
           comment: {
-            body: `[PRIVATE] ${message}`,
+            body: timestampedMessage,
             public: false  // This makes it a private/internal comment
           }
         } 
