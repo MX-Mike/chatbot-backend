@@ -459,6 +459,65 @@ app.post('/api/ticket/:id/comment', async (req, res) => {
   }
 });
 
+// Add a private comment to a ticket (internal notes for agents)
+app.post('/api/ticket/:id/private-comment', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { message, append = true } = req.body;
+    
+    console.log(`🔒 Adding private comment to ticket #${id}:`, {
+      messageLength: message?.length || 0,
+      append: append
+    });
+
+    if (!message || typeof message !== 'string') {
+      return res.status(400).json({ error: 'Message is required and must be a string' });
+    }
+
+    // Add timestamp to the message
+    const timestamp = new Date().toLocaleString();
+    const timestampedMessage = `[${timestamp}] ${message}`;
+
+    // Add a private comment using Zendesk's comment API
+    const response = await axios.post(
+      `${ZENDESK_BASE}/tickets/${id}/comments.json`,
+      { 
+        ticket: { 
+          comment: {
+            body: timestampedMessage,
+            public: false  // This makes it a private/internal comment
+          }
+        } 
+      },
+      {
+        headers: {
+          Authorization: `Basic ${AUTH}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    console.log(`✅ Private comment added successfully to ticket #${id}`);
+    res.json({ 
+      success: true, 
+      message: 'Private comment added successfully',
+      commentAdded: message
+    });
+    
+  } catch (err) {
+    console.error(`❌ Failed to add private comment to ticket #${req.params.id}:`, {
+      error: err.message,
+      status: err.response?.status,
+      statusText: err.response?.statusText,
+      data: err.response?.data
+    });
+    res.status(500).json({ 
+      error: err.message,
+      details: err.response?.data || 'Private comment posting failed'
+    });
+  }
+});
+
 // Get comments for a ticket + return requester_id
 app.get('/api/ticket/:id/comments', async (req, res) => {
   try {
@@ -705,6 +764,7 @@ app.listen(PORT, () => {
    POST /api/ticket                 - Create ticket (with optional search)
    POST /api/search-help-center     - Search Help Center articles  
    POST /api/ticket/:id/comment     - Add comment to ticket
+   POST /api/ticket/:id/private-comment - Add private comment to ticket
    GET  /api/ticket/:id/comments    - Get ticket comments
    POST /api/ticket/:id/solve       - Close/solve ticket
 
