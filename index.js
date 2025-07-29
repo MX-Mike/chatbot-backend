@@ -431,22 +431,53 @@ app.post('/api/ticket/:id/comment', async (req, res) => {
       console.log(`✅ End-user comment added successfully`);
       return res.json({ success: true, comment: response.data.comment });
     } else {
-      // STRATEGY: Use Requests API for end-user comments (more reliable than Tickets API)
-      // Since we don't have userToken, we'll use the Requests API with admin auth
-      // This approach works better for chat-based user comments
-      console.log(`👤 Adding end-user comment via Requests API (admin auth)`);
-      const response = await axios.post(
-        `${ZENDESK_BASE}/requests/${id}/comments.json`,
-        { comment: { body: message, public: true } },
-        {
-          headers: {
-            Authorization: `Basic ${AUTH}`,
-            'Content-Type': 'application/json'
+      // DIAGNOSTIC: Try multiple API approaches to identify what works
+      console.log(`🔍 DIAGNOSTIC: Testing multiple comment APIs for ticket #${id}`);
+      
+      let err1, err2;
+      
+      // Test 1: Requests API with admin auth
+      try {
+        console.log(`🧪 Test 1: Requests API with admin auth`);
+        const response1 = await axios.post(
+          `${ZENDESK_BASE}/requests/${id}/comments.json`,
+          { comment: { body: message, public: true } },
+          {
+            headers: {
+              Authorization: `Basic ${AUTH}`,
+              'Content-Type': 'application/json'
+            }
           }
-        }
-      );
-      console.log(`✅ End-user comment added successfully via Requests API`);
-      return res.json({ success: true, comment: response.data.comment });
+        );
+        console.log(`✅ Test 1 SUCCESS: Requests API worked`);
+        return res.json({ success: true, comment: response1.data.comment, method: 'requests-api' });
+      } catch (error) {
+        err1 = error;
+        console.log(`❌ Test 1 FAILED: Requests API error:`, error.response?.status, error.response?.data);
+      }
+      
+      // Test 2: Tickets API with admin auth (original approach)
+      try {
+        console.log(`🧪 Test 2: Tickets API with admin auth`);
+        const response2 = await axios.post(
+          `${ZENDESK_BASE}/tickets/${id}/comments.json`,
+          { ticket: { comment: { body: message, public: true } } },
+          {
+            headers: {
+              Authorization: `Basic ${AUTH}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+        console.log(`✅ Test 2 SUCCESS: Tickets API worked`);
+        return res.json({ success: true, comment: response2.data.comment, method: 'tickets-api' });
+      } catch (error) {
+        err2 = error;
+        console.log(`❌ Test 2 FAILED: Tickets API error:`, error.response?.status, error.response?.data);
+      }
+      
+      // If both failed, return diagnostic information
+      throw new Error(`Both APIs failed - Requests: ${err1?.response?.status}, Tickets: ${err2?.response?.status}`);
     }
   } catch (err) {
     console.error(`❌ Failed to add comment to ticket #${req.params.id}:`, {
