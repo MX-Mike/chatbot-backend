@@ -431,11 +431,13 @@ app.post('/api/ticket/:id/comment', async (req, res) => {
       console.log(`✅ End-user comment added successfully`);
       return res.json({ success: true, comment: response.data.comment });
     } else {
-      // Agent/admin comment via Tickets API
-      console.log(`🏢 Adding admin comment via Tickets API`);
+      // STRATEGY: Use Requests API for end-user comments (more reliable than Tickets API)
+      // Since we don't have userToken, we'll use the Requests API with admin auth
+      // This approach works better for chat-based user comments
+      console.log(`👤 Adding end-user comment via Requests API (admin auth)`);
       const response = await axios.post(
-        `${ZENDESK_BASE}/tickets/${id}/comments.json`,
-        { ticket: { comment: { body: message, public: true } } },
+        `${ZENDESK_BASE}/requests/${id}/comments.json`,
+        { comment: { body: message, public: true } },
         {
           headers: {
             Authorization: `Basic ${AUTH}`,
@@ -443,7 +445,7 @@ app.post('/api/ticket/:id/comment', async (req, res) => {
           }
         }
       );
-      console.log(`✅ Admin comment added successfully`);
+      console.log(`✅ End-user comment added successfully via Requests API`);
       return res.json({ success: true, comment: response.data.comment });
     }
   } catch (err) {
