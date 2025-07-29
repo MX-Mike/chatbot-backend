@@ -43,15 +43,18 @@ const AUTH = Buffer.from(`${process.env.ZENDESK_EMAIL}/token:${process.env.ZENDE
  */
 app.post('/api/ticket', async (req, res) => {
   try {
-    const { message, user, searchQuery, performSearch = true, skipTicketIfResults = false } = req.body;
+    const { message, user, searchQuery, performSearch = true, skipTicketIfResults = false, email, name } = req.body;
     
     console.log(`📨 Incoming ticket request:`, {
       message: message?.substring(0, 100) + '...',
       user,
+      email,
+      name,
       searchQuery,
       performSearch,
       skipTicketIfResults,
-      hasSearchQuery: !!searchQuery
+      hasSearchQuery: !!searchQuery,
+      hasUserInfo: !!(email && name)
     });
     
     let searchResults = null;
@@ -144,18 +147,29 @@ app.post('/api/ticket', async (req, res) => {
 
     // PHASE 2: ZENDESK TICKET CREATION
     // Create ticket using existing proven logic
-    console.log(`🎫 Creating Zendesk ticket for user: ${user || 'Anonymous'}`);
+    console.log(`🎫 Creating Zendesk ticket for user: ${name || user || 'Anonymous'}`);
+    
+    // Determine user information - prioritize provided name/email over defaults
+    const ticketRequesterName = name || user || 'Anonymous';
+    const ticketRequesterEmail = email || `${user || 'anon'}@example.com`;
+    
+    console.log(`👤 Ticket requester info:`, { 
+      name: ticketRequesterName, 
+      email: ticketRequesterEmail,
+      source: email ? 'user-provided' : 'default'
+    });
     
     const response = await axios.post(
       `${ZENDESK_BASE}/tickets.json`,
       {
         ticket: {
-          subject: `Chat from ${user || 'Anonymous'}`,
+          subject: `Chat support request from ${ticketRequesterName}`,
           comment: { body: message },
           requester: {
-            name: user || 'Anonymous',
-            email: `${user || 'anon'}@example.com`
-          }
+            name: ticketRequesterName,
+            email: ticketRequesterEmail
+          },
+          tags: ['chatbot_new_ticket', ...(email ? ['user_info_provided'] : ['default_user_info'])]
         }
       },
       {
@@ -167,7 +181,7 @@ app.post('/api/ticket', async (req, res) => {
     );
 
     const ticket = response.data.ticket;
-    console.log(`✅ Created ticket #${ticket.id}`);
+    console.log(`✅ Created ticket #${ticket.id} for ${ticketRequesterName} (${ticketRequesterEmail})`);
 
 
     // PHASE 3: AUTOMATIC AGENT COMMENT
