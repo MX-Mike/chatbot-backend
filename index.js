@@ -402,6 +402,7 @@ app.post('/api/search-help-center', async (req, res) => {
 
 // Add a public comment as the requester via Requests API
 // Add a public comment as the requester (end-user) or as agent (admin)
+// Updated: Force deployment refresh to ensure comment endpoint is available
 app.post('/api/ticket/:id/comment', async (req, res) => {
   try {
     const { id } = req.params;
