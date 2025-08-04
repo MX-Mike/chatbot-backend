@@ -133,6 +133,99 @@ Standalone endpoint for searching Help Center articles.
 
 ---
 
+### 3. Federated Search (NEW)
+**POST** `/api/search/federated`
+
+Server-side proxy for MXchatbot Unified Search API that bypasses CORS restrictions and handles authentication securely.
+
+#### Request Body
+```json
+{
+  "query": "password reset",
+  "limit": 10,
+  "filters": {
+    "category": "authentication",
+    "section": "user-accounts"
+  }
+}
+```
+
+#### Parameters
+- `query` (string, required): Search term (minimum 2 characters)
+- `limit` (number, optional): Maximum results to return (defaults to 10, max 50)
+- `filters` (object, optional): Search filters for category, section, etc.
+
+#### Response
+```json
+{
+  "success": true,
+  "results": [
+    {
+      "id": "article_123",
+      "title": "How to Reset Your Password",
+      "url": "https://help.getmaintainx.com/articles/password-reset",
+      "snippet": "Follow these steps to reset your password safely and securely...",
+      "score": 95.5,
+      "source": "zendesk",
+      "category": "Authentication",
+      "section": "User Accounts",
+      "last_updated": "2025-07-01T14:30:00Z"
+    }
+  ],
+  "total": 25,
+  "query": "password reset",
+  "sources": ["zendesk", "docs", "knowledge_base"],
+  "timestamp": "2025-07-31T11:30:00.000Z",
+  "api_version": "federated_v1"
+}
+```
+
+#### Fallback Response (if MXchatbot API fails)
+```json
+{
+  "success": true,
+  "results": [
+    {
+      "id": 123,
+      "title": "How to Reset Your Password",
+      "url": "https://help.company.com/articles/123",
+      "snippet": "Follow these steps to reset your password...",
+      "score": 89.2,
+      "source": "zendesk_fallback",
+      "category": null,
+      "section": 456
+    }
+  ],
+  "total": 5,
+  "query": "password reset",
+  "sources": ["zendesk_fallback"],
+  "fallback": true,
+  "original_error": "MXchatbot API timeout",
+  "timestamp": "2025-07-31T11:30:00.000Z",
+  "api_version": "federated_v1"
+}
+```
+
+#### Error Response
+```json
+{
+  "success": false,
+  "error": "Query must be at least 2 characters long",
+  "query": "",
+  "timestamp": "2025-07-31T11:30:00.000Z"
+}
+```
+
+#### Features
+- **Unified Search**: Searches across multiple knowledge sources via MXchatbot API
+- **CORS Bypass**: Server-side proxy eliminates client-side CORS issues  
+- **Secure Authentication**: API keys handled server-side, never exposed to frontend
+- **Automatic Fallback**: Falls back to Zendesk-only search if MXchatbot API fails
+- **Error Resilience**: Graceful error handling with detailed logging
+- **Performance**: 8-second timeout with efficient result transformation
+
+---
+
 ## 🔧 Implementation Features
 
 ### Search Query Processing
@@ -216,6 +309,50 @@ curl -X POST https://chatbot-backend-mzzp.onrender.com/api/ticket \
 
 ---
 
+## ⚙️ Environment Configuration
+
+### Required Environment Variables
+
+#### Zendesk Configuration (Existing)
+```bash
+ZENDESK_SUBDOMAIN=your-subdomain
+ZENDESK_EMAIL=your-email@company.com
+ZENDESK_API_TOKEN=your_zendesk_api_token_here
+```
+
+#### MXchatbot Configuration (NEW)
+```bash
+# Required for federated search functionality
+MXCHATBOT_API_URL=https://your-mxchatbot-api-url.com
+MXCHATBOT_API_KEY=your_mxchatbot_api_key_here
+```
+
+#### Optional Configuration
+```bash
+NODE_ENV=production
+PORT=4000
+SEARCH_LOCALE=en-us
+SEARCH_DEFAULT_LIMIT=10
+ENABLE_FEDERATED_SEARCH=true
+ENABLE_SEARCH_FALLBACK=true
+```
+
+### Deployment Steps for Render.com
+
+1. **Update Environment Variables**: Add the new MXchatbot variables in Render.com dashboard
+2. **Deploy Backend**: Push updated code to trigger automatic deployment
+3. **Test Endpoints**: Verify `/api/search/federated` endpoint functionality
+4. **Monitor Logs**: Check for any authentication or connectivity issues
+
+### Security Notes
+
+- **API Keys**: Never expose MXchatbot API keys in frontend code
+- **CORS**: Federated search bypasses CORS by using server-side proxy
+- **Rate Limiting**: Consider implementing rate limiting for production use
+- **Timeout Handling**: 8-second timeout prevents hanging requests
+
+---
+
 ## 🚀 Next Steps (Phase 2)
 
 - Frontend integration with search results display
@@ -227,5 +364,5 @@ curl -X POST https://chatbot-backend-mzzp.onrender.com/api/ticket \
 
 ---
 
-**Last Updated**: July 28, 2025
-**API Version**: 1.1.0 (Enhanced with Federated Search)
+**Last Updated**: July 31, 2025
+**API Version**: 1.2.0 (Enhanced with Federated Search via MXchatbot)

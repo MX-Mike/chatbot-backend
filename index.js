@@ -615,12 +615,21 @@ app.get('/api/ticket/:id/comments', async (req, res) => {
 app.post('/api/ticket/:id/solve', async (req, res) => {
   try {
     const { id } = req.params;
-    // Update the ticket status to 'solved' in Zendesk
+    
+    console.log(`🎯 Solving ticket #${id} with automatic comment`);
+    
+    const solvedComment = `AGENT CLOSED THIS SUPPORT REQUEST 🚫 ⛔ 🚷 - You can re-open this ticket by replying to the last ticket email.`;
+    
+    // ENHANCED APPROACH: Combine comment and status change in single API call
     const response = await axios.put(
       `${ZENDESK_BASE}/tickets/${id}.json`,
       {
         ticket: {
-          status: 'solved'
+          status: 'solved',
+          comment: {
+            body: solvedComment,
+            public: true
+          }
         }
       },
       {
@@ -630,7 +639,14 @@ app.post('/api/ticket/:id/solve', async (req, res) => {
         }
       }
     );
-    res.json({ success: true, ticket: response.data.ticket });
+    
+    console.log(`✅ Ticket #${id} solved successfully with automatic comment`);
+    res.json({ 
+      success: true, 
+      ticket: response.data.ticket,
+      message: 'Ticket solved with automatic closing comment'
+    });
+    
   } catch (err) {
     // Log the full Zendesk error response for debugging
     if (err.response && err.response.data) {
@@ -650,6 +666,174 @@ app.post('/api/ticket/:id/solve', async (req, res) => {
 
 const PORT = process.env.PORT || 4000;
 
+/**
+ * FEDERATED SEARCH ENDPOINT
+ * Server-side proxy for MXchatbot Unified Search API
+ * Bypasses CORS restrictions and handles authentication securely
+ * 
+ * @route POST /api/search/federated
+ * @param {string} query - Search term
+ * @param {number} [limit=10] - Maximum results to return
+ * @param {object} [filters] - Optional search filters
+ * @returns {object} Unified search results from multiple sources
+ */
+app.post('/api/search/federated', async (req, res) => {
+  try {
+    const { query, limit = 10, filters = {} } = req.body;
+    
+    console.log('🔍 Federated search request:', {
+      query,
+      limit,
+      filters,
+      timestamp: new Date().toISOString()
+    });
+    
+    // Validate input
+    if (!query || typeof query !== 'string' || query.trim().length < 2) {
+      return res.status(400).json({
+        success: false,
+        error: 'Query must be at least 2 characters long',
+        query: query || '',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Prepare MXchatbot API request
+    const mxApiUrl = process.env.MXCHATBOT_API_URL;
+    const mxApiKey = process.env.MXCHATBOT_API_KEY;
+    
+    if (!mxApiUrl || !mxApiKey) {
+      console.error('❌ MXchatbot API configuration missing');
+      return res.status(500).json({
+        success: false,
+        error: 'Federated search service not configured',
+        timestamp: new Date().toISOString()
+      });
+    }
+    
+    // Call MXchatbot Unified Search API
+    const searchResponse = await axios.post(
+      `${mxApiUrl}/api/search/unified`,
+      {
+        query: query.trim(),
+        limit: Math.min(limit, 50), // Cap at 50 results
+        filters,
+        sources: ['zendesk', 'docs', 'knowledge_base'], // Specify sources
+        include_snippets: true,
+        sort_by: 'relevance'
+      },
+      {
+        headers: {
+          'Authorization': `Bearer ${mxApiKey}`,
+          'Content-Type': 'application/json',
+          'User-Agent': 'ChatbotMX-Backend/1.0'
+        },
+        timeout: 8000 // 8 second timeout for external API
+      }
+    );
+    
+    console.log('✅ MXchatbot API response:', {
+      status: searchResponse.status,
+      resultCount: searchResponse.data?.results?.length || 0,
+      sources: searchResponse.data?.sources || []
+    });
+    
+    // Transform results for frontend consumption
+    const transformedResults = (searchResponse.data.results || []).map(result => ({
+      id: result.id,
+      title: result.title,
+      url: result.url,
+      snippet: result.snippet || stripHtmlAndCreateSnippet(result.content, 200),
+      score: result.score || 0,
+      source: result.source || 'unknown',
+      category: result.category || null,
+      section: result.section || null,
+      last_updated: result.last_updated || null
+    }));
+    
+    // Return unified response
+    res.json({
+      success: true,
+      results: transformedResults,
+      total: searchResponse.data.total || transformedResults.length,
+      query: query.trim(),
+      sources: searchResponse.data.sources || ['mxchatbot'],
+      timestamp: new Date().toISOString(),
+      api_version: 'federated_v1'
+    });
+    
+  } catch (error) {
+    console.error('❌ Federated search error:', {
+      message: error.message,
+      status: error.response?.status,
+      url: error.config?.url,
+      query: req.body?.query
+    });
+    
+    // Fallback to Zendesk-only search if MXchatbot fails
+    try {
+      console.log('🔄 Falling back to Zendesk Help Center search...');
+      
+      const fallbackResponse = await axios.get(
+        `${ZENDESK_BASE}/help_center/articles/search.json`,
+        {
+          params: {
+            query: req.body.query?.trim() || '',
+            locale: 'en-us',
+            per_page: Math.min(req.body.limit || 10, 20)
+          },
+          headers: {
+            Authorization: `Basic ${AUTH}`,
+            'Content-Type': 'application/json'
+          },
+          timeout: 5000
+        }
+      );
+      
+      const fallbackResults = (fallbackResponse.data.results || []).map(article => ({
+        id: article.id,
+        title: article.title,
+        url: article.html_url,
+        snippet: stripHtmlAndCreateSnippet(article.body, 200),
+        score: article.score || 0,
+        source: 'zendesk_fallback',
+        category: null,
+        section: article.section_id
+      }));
+      
+      console.log('✅ Fallback search completed:', {
+        resultCount: fallbackResults.length
+      });
+      
+      res.json({
+        success: true,
+        results: fallbackResults,
+        total: fallbackResponse.data.count || fallbackResults.length,
+        query: req.body.query?.trim() || '',
+        sources: ['zendesk_fallback'],
+        fallback: true,
+        original_error: error.message,
+        timestamp: new Date().toISOString(),
+        api_version: 'federated_v1'
+      });
+      
+    } catch (fallbackError) {
+      console.error('❌ Fallback search also failed:', fallbackError.message);
+      
+      res.status(500).json({
+        success: false,
+        error: 'All search services unavailable',
+        details: {
+          primary: error.message,
+          fallback: fallbackError.message
+        },
+        query: req.body.query || '',
+        timestamp: new Date().toISOString()
+      });
+    }
+  }
+});
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ 
@@ -668,6 +852,7 @@ app.get('/', (req, res) => {
     endpoints: [
       'POST /api/ticket - Create ticket with optional search',
       'POST /api/search-help-center - Search Help Center articles',
+      'POST /api/search/federated - Unified search via MXchatbot API',
       'POST /api/ticket/:id/comment - Add comment to ticket',
       'GET /api/ticket/:id/comments - Get ticket comments',
       'POST /api/ticket/:id/solve - Close/solve ticket',
@@ -785,6 +970,129 @@ function stripHtmlAndCreateSnippet(htmlText, maxLength = 150) {
 }
 
 /**
+ * ZENDESK WEBHOOK ENDPOINT FOR TICKET STATUS CHANGES
+ * Handles webhooks from Zendesk when ticket status changes to 'solved'
+ * Automatically adds a public comment with re-opening instructions
+ */
+app.post('/api/webhook/zendesk', async (req, res) => {
+  try {
+    console.log(`🔔 Zendesk webhook received:`, {
+      timestamp: new Date().toISOString(),
+      headers: req.headers,
+      bodyPreview: JSON.stringify(req.body).substring(0, 200)
+    });
+    
+    // Validate webhook authenticity (optional but recommended)
+    // You can add webhook authentication here if needed
+    
+    const { ticket, current_user } = req.body;
+    
+    if (!ticket) {
+      console.log(`⚠️ Webhook received without ticket data`);
+      return res.status(400).json({ error: 'No ticket data provided' });
+    }
+    
+    console.log(`🎫 Webhook for ticket #${ticket.id}:`, {
+      status: ticket.status,
+      previousStatus: req.body.previous_ticket?.status,
+      updatedBy: current_user?.name || 'Unknown',
+      updatedById: current_user?.id
+    });
+    
+    // Check if ticket status changed to 'solved'
+    if (ticket.status === 'solved' && req.body.previous_ticket?.status !== 'solved') {
+      console.log(`✅ Ticket #${ticket.id} was marked as solved by ${current_user?.name || 'agent'}`);
+      
+      // Check if this ticket has the chatbot tag (only add comment to chatbot tickets)
+      let shouldAddComment = false;
+      
+      if (Array.isArray(ticket.tags)) {
+        shouldAddComment = ticket.tags.includes('chatbot_new_ticket') || 
+                          ticket.tags.includes('chatbot') ||
+                          ticket.tags.some(tag => tag.includes('chatbot'));
+      }
+      
+      // If no tags available, check ticket description for chatbot marker
+      if (!shouldAddComment && ticket.description) {
+        shouldAddComment = ticket.description.includes('💬') || 
+                          ticket.description.includes('ENDUSER_MARKER');
+      }
+      
+      if (shouldAddComment) {
+        console.log(`💬 Checking if solved comment already exists for ticket #${ticket.id}`);
+        
+        try {
+          // First, check if the comment already exists to avoid duplicates
+          const commentsResponse = await axios.get(
+            `${ZENDESK_BASE}/tickets/${ticket.id}/comments.json`,
+            {
+              headers: {
+                Authorization: `Basic ${AUTH}`,
+                'Content-Type': 'application/json'
+              }
+            }
+          );
+          
+          const comments = commentsResponse.data.comments || [];
+          const solvedComment = `AGENT CLOSED THIS SUPPORT REQUEST 🚫 ⛔ 🚷 - You can re-open this ticket by replying to the last ticket email.`;
+          
+          // Check if this comment already exists
+          const commentExists = comments.some(comment => 
+            comment.body && comment.body.includes('AGENT CLOSED THIS SUPPORT REQUEST')
+          );
+          
+          if (commentExists) {
+            console.log(`ℹ️ Solved comment already exists for ticket #${ticket.id}, skipping duplicate`);
+          } else {
+            console.log(`💬 Adding solved comment to chatbot ticket #${ticket.id} via webhook`);
+            
+            // Use the same working approach as the agent comment method
+            await axios.put(
+              `${ZENDESK_BASE}/tickets/${ticket.id}.json`,
+              {
+                ticket: {
+                  comment: {
+                    body: solvedComment,
+                    public: true
+                  }
+                }
+              },
+              {
+                headers: {
+                  Authorization: `Basic ${AUTH}`,
+                  'Content-Type': 'application/json'
+                }
+              }
+            );
+            
+            console.log(`✅ Added solved comment to ticket #${ticket.id} via webhook`);
+          }
+          
+        } catch (commentErr) {
+          console.error(`❌ Failed to add solved comment to ticket #${ticket.id}:`, commentErr.response?.data || commentErr.message);
+        }
+      } else {
+        console.log(`ℹ️ Skipping solved comment for non-chatbot ticket #${ticket.id}`);
+      }
+    }
+    
+    // Always respond with success to acknowledge webhook
+    res.json({ 
+      success: true, 
+      message: 'Webhook processed successfully',
+      processed: ticket.status === 'solved'
+    });
+    
+  } catch (err) {
+    console.error(`❌ Error processing Zendesk webhook:`, err);
+    res.status(500).json({ 
+      error: 'Webhook processing failed',
+      message: err.message 
+    });
+  }
+});
+
+/**
  * SERVER STARTUP WITH ENHANCED LOGGING
  * Starts the Express server with comprehensive startup information
  */
@@ -810,6 +1118,7 @@ app.listen(PORT, () => {
    POST /api/ticket/:id/private-comment - Add private comment to ticket
    GET  /api/ticket/:id/comments    - Get ticket comments
    POST /api/ticket/:id/solve       - Close/solve ticket
+   POST /api/webhook/zendesk        - Zendesk webhook for ticket updates
 
 🔍 Federated Search Integration: 
    • Searches Help Center on first user message
