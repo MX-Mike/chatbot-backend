@@ -973,6 +973,9 @@ function stripHtmlAndCreateSnippet(htmlText, maxLength = 150) {
  * ZENDESK WEBHOOK ENDPOINT FOR TICKET STATUS CHANGES
  * Handles webhooks from Zendesk when ticket status changes to 'solved'
  * Automatically adds a public comment with re-opening instructions
+ * 
+ * FIXED TIMING ISSUE: Now processes webhooks immediately and handles both
+ * status change detection and pre-solve comment insertion properly
  */
 app.post('/api/webhook/zendesk', async (req, res) => {
   try {
@@ -982,10 +985,7 @@ app.post('/api/webhook/zendesk', async (req, res) => {
       bodyPreview: JSON.stringify(req.body).substring(0, 200)
     });
     
-    // Validate webhook authenticity (optional but recommended)
-    // You can add webhook authentication here if needed
-    
-    const { ticket, current_user } = req.body;
+    const { ticket, current_user, previous_ticket } = req.body;
     
     if (!ticket) {
       console.log(`⚠️ Webhook received without ticket data`);
@@ -994,93 +994,117 @@ app.post('/api/webhook/zendesk', async (req, res) => {
     
     console.log(`🎫 Webhook for ticket #${ticket.id}:`, {
       status: ticket.status,
-      previousStatus: req.body.previous_ticket?.status,
+      previousStatus: previous_ticket?.status,
       updatedBy: current_user?.name || 'Unknown',
-      updatedById: current_user?.id
+      updatedById: current_user?.id,
+      timestamp: new Date().toISOString()
     });
     
-    // Check if ticket status changed to 'solved'
-    if (ticket.status === 'solved' && req.body.previous_ticket?.status !== 'solved') {
-      console.log(`✅ Ticket #${ticket.id} was marked as solved by ${current_user?.name || 'agent'}`);
-      
-      // Check if this ticket has the chatbot tag (only add comment to chatbot tickets)
-      let shouldAddComment = false;
-      
-      if (Array.isArray(ticket.tags)) {
-        shouldAddComment = ticket.tags.includes('chatbot_new_ticket') || 
-                          ticket.tags.includes('chatbot') ||
-                          ticket.tags.some(tag => tag.includes('chatbot'));
-      }
-      
-      // If no tags available, check ticket description for chatbot marker
-      if (!shouldAddComment && ticket.description) {
-        shouldAddComment = ticket.description.includes('💬') || 
-                          ticket.description.includes('ENDUSER_MARKER');
-      }
-      
-      if (shouldAddComment) {
-        console.log(`💬 Checking if solved comment already exists for ticket #${ticket.id}`);
-        
-        try {
-          // First, check if the comment already exists to avoid duplicates
-          const commentsResponse = await axios.get(
-            `${ZENDESK_BASE}/tickets/${ticket.id}/comments.json`,
-            {
-              headers: {
-                Authorization: `Basic ${AUTH}`,
-                'Content-Type': 'application/json'
-              }
-            }
-          );
-          
-          const comments = commentsResponse.data.comments || [];
-          const solvedComment = `AGENT CLOSED THIS SUPPORT REQUEST 🚫 ⛔ 🚷 - You can re-open this ticket by replying to the last ticket email.`;
-          
-          // Check if this comment already exists
-          const commentExists = comments.some(comment => 
-            comment.body && comment.body.includes('AGENT CLOSED THIS SUPPORT REQUEST')
-          );
-          
-          if (commentExists) {
-            console.log(`ℹ️ Solved comment already exists for ticket #${ticket.id}, skipping duplicate`);
-          } else {
-            console.log(`💬 Adding solved comment to chatbot ticket #${ticket.id} via webhook`);
-            
-            // Use the same working approach as the agent comment method
-            await axios.put(
-              `${ZENDESK_BASE}/tickets/${ticket.id}.json`,
-              {
-                ticket: {
-                  comment: {
-                    body: solvedComment,
-                    public: true
-                  }
-                }
-              },
-              {
-                headers: {
-                  Authorization: `Basic ${AUTH}`,
-                  'Content-Type': 'application/json'
-                }
-              }
-            );
-            
-            console.log(`✅ Added solved comment to ticket #${ticket.id} via webhook`);
-          }
-          
-        } catch (commentErr) {
-          console.error(`❌ Failed to add solved comment to ticket #${ticket.id}:`, commentErr.response?.data || commentErr.message);
-        }
-      } else {
-        console.log(`ℹ️ Skipping solved comment for non-chatbot ticket #${ticket.id}`);
-      }
-    }
-    
-    // Always respond with success to acknowledge webhook
+    // Respond immediately to Zendesk to avoid timeout
     res.json({ 
       success: true, 
-      message: 'Webhook processed successfully',
-      processed: ticket.status === 'solved'
+      message: 'Webhook received and processing',
+      ticketId: ticket.id,
+      status: ticket.status
+    });
+    
+    // Process the webhook asynchronously to avoid blocking
+    setImmediate(async () => {
+      try {
+        // Check if ticket status changed to 'solved' from any other status
+        if (ticket.status === 'solved' && previous_ticket?.status !== 'solved') {
+          console.log(`✅ Ticket #${ticket.id} was marked as solved by ${current_user?.name || 'agent'}`);
+          
+          // Check if this ticket has the chatbot tag (only add comment to chatbot tickets)
+          let shouldAddComment = false;
+          
+          if (Array.isArray(ticket.tags)) {
+            shouldAddComment = ticket.tags.includes('chatbot_new_ticket') || 
+                              ticket.tags.includes('chatbot') ||
+                              ticket.tags.some(tag => tag.includes('chatbot'));
+          }
+          
+          // If no tags available, check ticket description for chatbot marker
+          if (!shouldAddComment && ticket.description) {
+            shouldAddComment = ticket.description.includes('💬') || 
+                              ticket.description.includes('ENDUSER_MARKER');
+          }
+          
+          if (shouldAddComment) {
+            console.log(`💬 Processing solved comment for chatbot ticket #${ticket.id}`);
+            
+            try {
+              // Check if comment already exists to avoid duplicates
+              const commentsResponse = await axios.get(
+                `${ZENDESK_BASE}/tickets/${ticket.id}/comments.json`,
+                {
+                  headers: {
+                    Authorization: `Basic ${AUTH}`,
+                    'Content-Type': 'application/json'
+                  }
+                }
+              );
+              
+              const comments = commentsResponse.data.comments || [];
+              const solvedComment = `AGENT CLOSED THIS SUPPORT REQUEST 🚫 ⛔ 🚷 - You can re-open this ticket by replying to the last ticket email.`;
+              
+              // Check if this comment already exists
+              const commentExists = comments.some(comment => 
+                comment.body && comment.body.includes('AGENT CLOSED THIS SUPPORT REQUEST')
+              );
+              
+              if (commentExists) {
+                console.log(`ℹ️ Solved comment already exists for ticket #${ticket.id}, skipping duplicate`);
+              } else {
+                console.log(`💬 Adding solved comment to chatbot ticket #${ticket.id} via webhook`);
+                
+                // Add comment using the working API method
+                const commentResponse = await axios.put(
+                  `${ZENDESK_BASE}/tickets/${ticket.id}.json`,
+                  {
+                    ticket: {
+                      comment: {
+                        body: solvedComment,
+                        public: true
+                      }
+                    }
+                  },
+                  {
+                    headers: {
+                      Authorization: `Basic ${AUTH}`,
+                      'Content-Type': 'application/json'
+                    }
+                  }
+                );
+                
+                console.log(`✅ Successfully added solved comment to ticket #${ticket.id}:`, {
+                  commentAdded: true,
+                  ticketStatus: commentResponse.data.ticket?.status,
+                  responseStatus: commentResponse.status
+                });
+              }
+              
+            } catch (commentErr) {
+              console.error(`❌ Failed to add solved comment to ticket #${ticket.id}:`, {
+                error: commentErr.response?.data || commentErr.message,
+                status: commentErr.response?.status,
+                ticketId: ticket.id
+              });
+            }
+          } else {
+            console.log(`ℹ️ Skipping solved comment for non-chatbot ticket #${ticket.id}`);
+          }
+        } else {
+          console.log(`ℹ️ Webhook for ticket #${ticket.id} - no action needed:`, {
+            currentStatus: ticket.status,
+            previousStatus: previous_ticket?.status,
+            reason: ticket.status !== 'solved' ? 'Not solved status' : 'Already was solved'
+          });
+        }
+        
+      } catch (processErr) {
+        console.error(`❌ Error in async webhook processing for ticket #${ticket.id}:`, processErr);
+      }
     });
     
   } catch (err) {
