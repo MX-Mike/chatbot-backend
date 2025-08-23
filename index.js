@@ -1117,6 +1117,54 @@ app.post('/api/webhook/zendesk', async (req, res) => {
 });
 
 /**
+ * GET USER INFORMATION FROM ZENDESK
+ * Fetches user details including name for agent identification
+ * 
+ * @route GET /api/user/:id
+ * @param {string} id - Zendesk user ID
+ * @returns {object} User information including name and email
+ */
+app.get('/api/user/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    console.log(`🔍 Fetching user information for ID: ${id}`);
+    
+    const response = await axios.get(`${ZENDESK_BASE}/users/${id}.json`, {
+      headers: {
+        Authorization: `Basic ${AUTH}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    const user = response.data.user;
+    console.log(`✅ Retrieved user information:`, {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role
+    });
+    
+    res.json({
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role
+    });
+    
+  } catch (err) {
+    console.error(`❌ Error fetching user information for ID ${req.params.id}:`, {
+      error: err.response?.data || err.message,
+      status: err.response?.status
+    });
+    
+    res.status(err.response?.status || 500).json({
+      error: 'Failed to fetch user information',
+      message: err.response?.data?.error || err.message
+    });
+  }
+});
+
+/**
  * SERVER STARTUP WITH ENHANCED LOGGING
  * Starts the Express server with comprehensive startup information
  */
@@ -1142,6 +1190,7 @@ app.listen(PORT, () => {
    POST /api/ticket/:id/private-comment - Add private comment to ticket
    GET  /api/ticket/:id/comments    - Get ticket comments
    POST /api/ticket/:id/solve       - Close/solve ticket
+   GET  /api/user/:id               - Get user information (name, email, role)
    POST /api/webhook/zendesk        - Zendesk webhook for ticket updates
 
 🔍 Federated Search Integration: 
