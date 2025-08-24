@@ -585,7 +585,8 @@ app.get('/api/ticket/:id', async (req, res) => {
       created_at: ticket.created_at,
       updated_at: ticket.updated_at,
       priority: ticket.priority,
-      requester_id: ticket.requester_id
+      requester_id: ticket.requester_id,
+      tags: ticket.tags || []
     });
 
   } catch (error) {
@@ -1201,6 +1202,388 @@ app.get('/api/user/:id', async (req, res) => {
   }
 });
 
+// Get enhanced ticket status including VIP, priority, and escalation status
+app.get('/api/ticket/:id/status-details', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    console.log(`🔍 Fetching enhanced status details for ticket #${id}`);
+    
+    const response = await axios.get(`${ZENDESK_BASE}/tickets/${id}.json`, {
+      headers: {
+        'Authorization': `Basic ${AUTH}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    const ticket = response.data.ticket;
+    
+    // Analyze tags for VIP status
+    const vipTags = (ticket.tags || []).filter(tag => 
+      tag.toLowerCase().includes('vip') || 
+      tag.toLowerCase().includes('premium') ||
+      tag.toLowerCase().includes('enterprise')
+    );
+    
+    // Analyze tags for escalation status
+    const escalationTags = (ticket.tags || []).filter(tag =>
+      tag.toLowerCase().includes('escalat') ||
+      tag.toLowerCase().includes('urgent') ||
+      tag.toLowerCase().includes('priority')
+    );
+    
+    // Determine VIP level
+    let vipLevel = 'standard';
+    if (vipTags.some(tag => tag.toLowerCase().includes('enterprise'))) {
+      vipLevel = 'enterprise';
+    } else if (vipTags.some(tag => tag.toLowerCase().includes('premium'))) {
+      vipLevel = 'premium';
+    } else if (vipTags.length > 0) {
+      vipLevel = 'vip';
+    }
+    
+    // Determine escalation level
+    let escalationLevel = 0;
+    if (ticket.priority === 'urgent') escalationLevel = 3;
+    else if (ticket.priority === 'high') escalationLevel = 2;
+    else if (escalationTags.length > 0) escalationLevel = 1;
+    
+    const enhancedStatus = {
+      id: ticket.id,
+      status: ticket.status,
+      priority: ticket.priority || 'normal',
+      subject: ticket.subject,
+      created_at: ticket.created_at,
+      updated_at: ticket.updated_at,
+      requester_id: ticket.requester_id,
+      assignee_id: ticket.assignee_id,
+      tags: ticket.tags || [],
+      
+      // VIP Status Analysis
+      vipStatus: {
+        isVip: vipTags.length > 0,
+        level: vipLevel,
+        tags: vipTags
+      },
+      
+      // Escalation Analysis
+      escalation: {
+        isEscalated: escalationLevel > 0,
+        level: escalationLevel,
+        tags: escalationTags,
+        autoEscalated: ticket.priority === 'urgent' || ticket.priority === 'high'
+      },
+      
+      // Status Icons for UI
+      icons: {
+        status: getStatusIcon(ticket.status, vipTags.length > 0),
+        priority: getPriorityIcon(ticket.priority),
+        vip: vipTags.length > 0 ? '👑' : '',
+        escalation: escalationLevel > 0 ? '🚨' : ''
+      }
+    };
+    
+    console.log(`✅ Enhanced status for ticket #${id}:`, {
+      status: enhancedStatus.status,
+      priority: enhancedStatus.priority,
+      isVip: enhancedStatus.vipStatus.isVip,
+      vipLevel: enhancedStatus.vipStatus.level,
+      isEscalated: enhancedStatus.escalation.isEscalated,
+      escalationLevel: enhancedStatus.escalation.level
+    });
+    
+    res.json(enhancedStatus);
+
+  } catch (error) {
+    console.error(`❌ Error fetching enhanced status for ticket #${req.params.id}:`, error.response?.data || error.message);
+    res.status(error.response?.status || 500).json({ 
+      error: 'Failed to fetch enhanced ticket status',
+      details: error.response?.data || error.message 
+    });
+  }
+});
+
+// Update ticket priority
+app.post('/api/ticket/:id/priority', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { priority, reason } = req.body;
+    
+    // Validate priority value
+    const validPriorities = ['low', 'normal', 'high', 'urgent'];
+    if (!validPriorities.includes(priority)) {
+      return res.status(400).json({
+        error: 'Invalid priority value',
+        validValues: validPriorities,
+        provided: priority
+      });
+    }
+    
+    console.log(`🎯 Updating ticket #${id} priority to: ${priority}`);
+    
+    const updateData = {
+      ticket: {
+        priority: priority
+      }
+    };
+    
+    // Add comment if reason provided
+    if (reason) {
+      updateData.ticket.comment = {
+        body: `Priority updated to ${priority.toUpperCase()}. Reason: ${reason}`,
+        public: false // Private comment for internal tracking
+      };
+    }
+    
+    const response = await axios.put(
+      `${ZENDESK_BASE}/tickets/${id}.json`,
+      updateData,
+      {
+        headers: {
+          Authorization: `Basic ${AUTH}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    console.log(`✅ Priority updated for ticket #${id} to: ${priority}`);
+    res.json({ 
+      success: true, 
+      ticket: response.data.ticket,
+      previousPriority: response.data.ticket.priority,
+      newPriority: priority,
+      reason: reason || 'No reason provided'
+    });
+    
+  } catch (err) {
+    console.error(`❌ Failed to update priority for ticket #${req.params.id}:`, {
+      error: err.message,
+      status: err.response?.status,
+      data: err.response?.data
+    });
+    res.status(500).json({ 
+      error: err.message,
+      details: err.response?.data || 'Priority update failed'
+    });
+  }
+});
+
+// Add VIP tag to ticket
+app.post('/api/ticket/:id/vip', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { vipLevel = 'vip', reason } = req.body;
+    
+    // Validate VIP level
+    const validLevels = ['vip', 'premium', 'enterprise'];
+    if (!validLevels.includes(vipLevel)) {
+      return res.status(400).json({
+        error: 'Invalid VIP level',
+        validLevels: validLevels,
+        provided: vipLevel
+      });
+    }
+    
+    console.log(`👑 Adding VIP status (${vipLevel}) to ticket #${id}`);
+    
+    // Get current ticket to preserve existing tags
+    const ticketResponse = await axios.get(`${ZENDESK_BASE}/tickets/${id}.json`, {
+      headers: {
+        Authorization: `Basic ${AUTH}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    const currentTags = ticketResponse.data.ticket.tags || [];
+    const vipTag = `vip_${vipLevel}`;
+    
+    // Remove any existing VIP tags and add new one
+    const filteredTags = currentTags.filter(tag => 
+      !tag.toLowerCase().includes('vip_') && 
+      !tag.toLowerCase().includes('premium') && 
+      !tag.toLowerCase().includes('enterprise')
+    );
+    
+    const newTags = [...filteredTags, vipTag, 'vip_customer'];
+    
+    const updateData = {
+      ticket: {
+        tags: newTags,
+        priority: vipLevel === 'enterprise' ? 'high' : 
+                 vipLevel === 'premium' ? 'high' : 'normal'
+      }
+    };
+    
+    // Add comment if reason provided
+    if (reason) {
+      updateData.ticket.comment = {
+        body: `Customer marked as ${vipLevel.toUpperCase()} VIP. Reason: ${reason}`,
+        public: false // Private comment for internal tracking
+      };
+    }
+    
+    const response = await axios.put(
+      `${ZENDESK_BASE}/tickets/${id}.json`,
+      updateData,
+      {
+        headers: {
+          Authorization: `Basic ${AUTH}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    console.log(`✅ VIP status (${vipLevel}) added to ticket #${id}`);
+    res.json({ 
+      success: true, 
+      ticket: response.data.ticket,
+      vipLevel: vipLevel,
+      vipTag: vipTag,
+      reason: reason || 'No reason provided',
+      priorityUpdated: updateData.ticket.priority
+    });
+    
+  } catch (err) {
+    console.error(`❌ Failed to add VIP status to ticket #${req.params.id}:`, {
+      error: err.message,
+      status: err.response?.status,
+      data: err.response?.data
+    });
+    res.status(500).json({ 
+      error: err.message,
+      details: err.response?.data || 'VIP status update failed'
+    });
+  }
+});
+
+// Escalate ticket
+app.post('/api/ticket/:id/escalate', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { level = 1, reason, assignTo } = req.body;
+    
+    // Validate escalation level
+    if (!Number.isInteger(level) || level < 1 || level > 3) {
+      return res.status(400).json({
+        error: 'Invalid escalation level',
+        validLevels: [1, 2, 3],
+        provided: level
+      });
+    }
+    
+    console.log(`🚨 Escalating ticket #${id} to level ${level}`);
+    
+    // Get current ticket
+    const ticketResponse = await axios.get(`${ZENDESK_BASE}/tickets/${id}.json`, {
+      headers: {
+        Authorization: `Basic ${AUTH}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    const currentTags = ticketResponse.data.ticket.tags || [];
+    const escalationTag = `escalated_level_${level}`;
+    
+    // Remove existing escalation tags and add new one
+    const filteredTags = currentTags.filter(tag => 
+      !tag.toLowerCase().includes('escalated_level_')
+    );
+    
+    const newTags = [...filteredTags, escalationTag, 'escalated'];
+    
+    // Determine priority based on escalation level
+    const priorityMap = {
+      1: 'high',
+      2: 'urgent', 
+      3: 'urgent'
+    };
+    
+    const updateData = {
+      ticket: {
+        tags: newTags,
+        priority: priorityMap[level],
+        status: 'open' // Ensure escalated tickets are open
+      }
+    };
+    
+    // Assign to specific agent if provided
+    if (assignTo) {
+      updateData.ticket.assignee_id = assignTo;
+    }
+    
+    // Add escalation comment
+    const escalationComment = reason 
+      ? `🚨 ESCALATED TO LEVEL ${level}: ${reason}`
+      : `🚨 ESCALATED TO LEVEL ${level}: Requires immediate attention`;
+      
+    updateData.ticket.comment = {
+      body: escalationComment,
+      public: false // Private comment for internal tracking
+    };
+    
+    const response = await axios.put(
+      `${ZENDESK_BASE}/tickets/${id}.json`,
+      updateData,
+      {
+        headers: {
+          Authorization: `Basic ${AUTH}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    console.log(`✅ Ticket #${id} escalated to level ${level}`);
+    res.json({ 
+      success: true, 
+      ticket: response.data.ticket,
+      escalationLevel: level,
+      escalationTag: escalationTag,
+      newPriority: priorityMap[level],
+      assignedTo: assignTo || 'No specific assignment',
+      reason: reason || 'No reason provided'
+    });
+    
+  } catch (err) {
+    console.error(`❌ Failed to escalate ticket #${req.params.id}:`, {
+      error: err.message,
+      status: err.response?.status,
+      data: err.response?.data
+    });
+    res.status(500).json({ 
+      error: err.message,
+      details: err.response?.data || 'Escalation failed'
+    });
+  }
+});
+
+// Helper functions for status and priority icons
+function getStatusIcon(status, isVip = false) {
+  // Handle VIP Open status first
+  if (isVip && status && status.toLowerCase() === 'open') {
+    return '•🔥↔️';
+  }
+  
+  const statusIcons = {
+    'new': '•📩',      // Yellow bullet + envelope
+    'open': '•↔️',     // Red bullet + arrows
+    'pending': '•⏳',  // Blue bullet + hourglass
+    'hold': '•🪢',     // Light blue bullet + knot
+    'solved': '•✅',   // Green bullet + check
+    'closed': '•🔒'    // Dark bullet + lock
+  };
+  return statusIcons[status] || '•📋';
+}
+
+function getPriorityIcon(priority) {
+  const priorityIcons = {
+    'low': '🟢',
+    'normal': '🟡', 
+    'high': '🟠',
+    'urgent': '🔴'
+  };
+  return priorityIcons[priority] || '⚪';
+}
+
 /**
  * SERVER STARTUP WITH ENHANCED LOGGING
  * Starts the Express server with comprehensive startup information
@@ -1230,6 +1613,12 @@ app.listen(PORT, () => {
    POST /api/ticket/:id/solve       - Close/solve ticket
    GET  /api/user/:id               - Get user information (name, email, role)
    POST /api/webhook/zendesk        - Zendesk webhook for ticket updates
+   
+   🆕 NEW ADVANCED TICKET MANAGEMENT:
+   GET  /api/ticket/:id/status-details - Get enhanced status (VIP, priority, escalation)
+   POST /api/ticket/:id/priority    - Update ticket priority
+   POST /api/ticket/:id/vip         - Add VIP customer status
+   POST /api/ticket/:id/escalate    - Escalate ticket with levels
 
 🔍 Federated Search Integration: 
    • Searches Help Center on first user message
