@@ -71,7 +71,7 @@ app.post('/api/ticket', async (req, res) => {
           {
             params: {
               query: searchQuery.trim(),
-              locale: 'en-us', // TODO: Make configurable via environment variable
+              locale: process.env.ZENDESK_LOCALE || 'en-us', // Configurable via environment variable
               per_page: 3 // Limit to top 3 results for chat interface
             },
             headers: {
@@ -522,7 +522,7 @@ app.post('/api/ticket/:id/private-comment', async (req, res) => {
     const timestampedMessage = `[${timestamp}] ${message}`;
 
     // Add a private comment using Zendesk's comment API
-    const response = await axios.post(
+    await axios.post(
       `${ZENDESK_BASE}/tickets/${id}/comments.json`,
       { 
         ticket: { 
@@ -557,6 +557,42 @@ app.post('/api/ticket/:id/private-comment', async (req, res) => {
     res.status(500).json({ 
       error: err.message,
       details: err.response?.data || 'Private comment posting failed'
+    });
+  }
+});
+
+// Get ticket details and status
+app.get('/api/ticket/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    
+    console.log(`🎭 Fetching ticket status for #${id}`);
+    
+    const response = await axios.get(`${ZENDESK_BASE}/tickets/${id}.json`, {
+      headers: {
+        'Authorization': `Basic ${AUTH}`,
+        'Content-Type': 'application/json'
+      }
+    });
+
+    const ticket = response.data.ticket;
+    console.log(`✅ Ticket #${id} status: "${ticket.status}"`);
+    
+    res.json({
+      id: ticket.id,
+      status: ticket.status,
+      subject: ticket.subject,
+      created_at: ticket.created_at,
+      updated_at: ticket.updated_at,
+      priority: ticket.priority,
+      requester_id: ticket.requester_id
+    });
+
+  } catch (error) {
+    console.error(`❌ Error fetching ticket #${req.params.id}:`, error.response?.data || error.message);
+    res.status(error.response?.status || 500).json({ 
+      error: 'Failed to fetch ticket status',
+      details: error.response?.data || error.message 
     });
   }
 });
@@ -854,6 +890,7 @@ app.get('/', (req, res) => {
       'POST /api/search-help-center - Search Help Center articles',
       'POST /api/search/federated - Unified search via MXchatbot API',
       'POST /api/ticket/:id/comment - Add comment to ticket',
+      'GET /api/ticket/:id - Get ticket details and status',
       'GET /api/ticket/:id/comments - Get ticket comments',
       'POST /api/ticket/:id/solve - Close/solve ticket',
       'GET /health - Health check'
@@ -873,7 +910,7 @@ app.get('/', (req, res) => {
  * @param {string} message - Raw user message with potential markers
  * @returns {string} Cleaned search query suitable for Help Center search
  */
-function extractSearchQuery(message) {
+function _extractSearchQuery(message) {
   if (!message || typeof message !== 'string') {
     return '';
   }
@@ -905,7 +942,7 @@ function extractSearchQuery(message) {
  * @param {string} query - Search query to validate
  * @returns {boolean} True if query is suitable for search
  */
-function isValidSearchQuery(query) {
+function _isValidSearchQuery(query) {
   if (!query || typeof query !== 'string') {
     return false;
   }
@@ -1009,7 +1046,7 @@ app.post('/api/webhook/zendesk', async (req, res) => {
     });
     
     // Process the webhook asynchronously to avoid blocking
-    setImmediate(async () => {
+    process.nextTick(async () => {
       try {
         // Check if ticket status changed to 'solved' from any other status
         if (ticket.status === 'solved' && previous_ticket?.status !== 'solved') {
@@ -1188,6 +1225,7 @@ app.listen(PORT, () => {
    POST /api/search-help-center     - Search Help Center articles  
    POST /api/ticket/:id/comment     - Add comment to ticket
    POST /api/ticket/:id/private-comment - Add private comment to ticket
+   GET  /api/ticket/:id             - Get ticket details and status
    GET  /api/ticket/:id/comments    - Get ticket comments
    POST /api/ticket/:id/solve       - Close/solve ticket
    GET  /api/user/:id               - Get user information (name, email, role)
