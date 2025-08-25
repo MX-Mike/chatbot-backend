@@ -185,14 +185,13 @@ app.post('/api/ticket', async (req, res) => {
 
 
     // PHASE 3: AUTOMATIC AGENT COMMENT
-    // Add agent public comment after ticket creation (existing functionality)
-    // PHASE 3: AUTOMATIC AGENT COMMENT
-    // Add agent public comment after ticket creation (existing functionality)
+    // Add agent public comment after ticket creation using ticket update API
     try {
       console.log(`💬 Adding automatic agent comment to ticket #${ticket.id}`);
       
-      await axios.post(
-        `${ZENDESK_BASE}/tickets/${ticket.id}/comments.json`,
+      // Use ticket update API instead of comments API for better compatibility
+      await axios.put(
+        `${ZENDESK_BASE}/tickets/${ticket.id}.json`,
         {
           ticket: {
             comment: {
@@ -209,10 +208,14 @@ app.post('/api/ticket', async (req, res) => {
         }
       );
       
-      console.log(`✅ Added agent comment to ticket #${ticket.id}`);
+      console.log(`✅ Added agent comment to ticket #${ticket.id} via ticket update API`);
       
     } catch (err) {
-      console.error(`⚠️ Failed to add agent comment to ticket #${ticket.id}:`, err.response?.data || err.message);
+      console.error(`⚠️ Failed to add agent comment to ticket #${ticket.id}:`, {
+        error: err.response?.data || err.message,
+        status: err.response?.status,
+        endpoint: `${ZENDESK_BASE}/tickets/${ticket.id}.json`
+      });
       // Don't block ticket creation if comment fails
     }
 
