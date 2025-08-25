@@ -55,7 +55,11 @@ app.post('/api/ticket', async (req, res) => {
       skipTicketIfResults,
       hasSearchQuery: !!searchQuery,
       hasUserInfo: !!(email && name),
-      hasClickedArticles: !!(clickedArticles && clickedArticles.count > 0)
+      hasClickedArticles: !!(clickedArticles && clickedArticles.count > 0),
+      clickedArticlesRaw: clickedArticles, // Log the raw clicked articles data for debugging
+      clickedArticlesType: typeof clickedArticles,
+      clickedArticlesCount: clickedArticles?.count,
+      clickedArticlesLength: clickedArticles?.articles?.length
     });
     
     let searchResults = null;
