@@ -43,7 +43,7 @@ const AUTH = Buffer.from(`${process.env.ZENDESK_EMAIL}/token:${process.env.ZENDE
  */
 app.post('/api/ticket', async (req, res) => {
   try {
-    const { message, user, searchQuery, performSearch = true, skipTicketIfResults = false, email, name } = req.body;
+    const { message, user, searchQuery, performSearch = true, skipTicketIfResults = false, email, name, clickedArticles } = req.body;
     
     console.log(`📨 Incoming ticket request:`, {
       message: message?.substring(0, 100) + '...',
@@ -54,7 +54,8 @@ app.post('/api/ticket', async (req, res) => {
       performSearch,
       skipTicketIfResults,
       hasSearchQuery: !!searchQuery,
-      hasUserInfo: !!(email && name)
+      hasUserInfo: !!(email && name),
+      hasClickedArticles: !!(clickedArticles && clickedArticles.count > 0)
     });
     
     let searchResults = null;
@@ -246,6 +247,60 @@ app.post('/api/ticket', async (req, res) => {
       // Don't block ticket creation if tag fails
     }
 
+    // PHASE 4.5: CLICKED ARTICLES PRIVATE COMMENT
+    // Add private comment with clicked articles data if provided
+    if (clickedArticles && clickedArticles.count > 0) {
+      try {
+        console.log(`📚 Adding private comment with ${clickedArticles.count} clicked articles to ticket #${ticket.id}`);
+        
+        const articlesList = clickedArticles.articles.map((article, index) => 
+          `${article.index}. "${article.title}" - ${article.url} (Source: ${article.source}, Clicked: ${new Date(article.clickedAt).toLocaleString()})`
+        ).join('\n');
+        
+        const privateCommentBody = `Articles accessed by user during chat session:
+
+User clicked and viewed the following ${clickedArticles.count} help article(s):
+${articlesList}
+
+This context may help agents understand what the user has already reviewed before requesting support.`;
+
+        // Add timestamp to the message
+        const timestamp = new Date().toLocaleString();
+        const timestampedMessage = `[${timestamp}] ${privateCommentBody}`;
+
+        // Add a private comment using Zendesk's comment API
+        await axios.post(
+          `${ZENDESK_BASE}/tickets/${ticket.id}/comments.json`,
+          { 
+            ticket: { 
+              comment: {
+                body: timestampedMessage,
+                public: false  // This makes it a private/internal comment
+              }
+            } 
+          },
+          {
+            headers: {
+              Authorization: `Basic ${AUTH}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        );
+        
+        console.log(`✅ Private comment with clicked articles added to ticket #${ticket.id}`);
+        
+      } catch (err) {
+        console.error(`⚠️ Failed to add clicked articles private comment to ticket #${ticket.id}:`, {
+          error: err.response?.data || err.message,
+          status: err.response?.status,
+          clickedArticlesCount: clickedArticles.count
+        });
+        // Don't block ticket creation if private comment fails
+      }
+    } else {
+      console.log(`📚 No clicked articles to add to ticket #${ticket.id}`);
+    }
+
     // PHASE 5: ENHANCED RESPONSE WITH SEARCH RESULTS
     // Return enhanced response with both ticket data and search results
     const enhancedResponse = {
@@ -259,19 +314,26 @@ app.post('/api/ticket', async (req, res) => {
       searchQuery: searchQuery || null,
       searchError: searchError,
       
+      // Clicked articles processing info
+      clickedArticlesProcessed: !!(clickedArticles && clickedArticles.count > 0),
+      clickedArticlesCount: clickedArticles?.count || 0,
+      
       // Additional metadata for analytics and debugging
       timestamp: new Date().toISOString(),
       features: {
         federatedSearch: true,
         autoTaging: true,
-        agentComment: true
+        agentComment: true,
+        clickedArticlesTracking: true
       }
     };
     
     console.log(`🚀 Ticket creation complete for #${ticket.id}`, {
       hasSearchResults: !!searchResults,
       searchResultCount: searchResults?.length || 0,
-      searchQuery: searchQuery || 'none'
+      searchQuery: searchQuery || 'none',
+      clickedArticlesProcessed: !!(clickedArticles && clickedArticles.count > 0),
+      clickedArticlesCount: clickedArticles?.count || 0
     });
 
     res.json(enhancedResponse);
