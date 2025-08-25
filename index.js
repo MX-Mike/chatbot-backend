@@ -184,43 +184,7 @@ app.post('/api/ticket', async (req, res) => {
     const ticket = response.data.ticket;
     console.log(`✅ Created ticket #${ticket.id} for ${ticketRequesterName} (${ticketRequesterEmail})`);
 
-
-    // PHASE 3: AUTOMATIC AGENT COMMENT
-    // Add agent public comment after ticket creation using ticket update API
-    try {
-      console.log(`💬 Adding automatic agent comment to ticket #${ticket.id}`);
-      
-      // Use ticket update API instead of comments API for better compatibility
-      await axios.put(
-        `${ZENDESK_BASE}/tickets/${ticket.id}.json`,
-        {
-          ticket: {
-            comment: {
-              body: `Ticket number ${ticket.id} has been opened for you.`,
-              public: true
-            }
-          }
-        },
-        {
-          headers: {
-            Authorization: `Basic ${AUTH}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
-      
-      console.log(`✅ Added agent comment to ticket #${ticket.id} via ticket update API`);
-      
-    } catch (err) {
-      console.error(`⚠️ Failed to add agent comment to ticket #${ticket.id}:`, {
-        error: err.response?.data || err.message,
-        status: err.response?.status,
-        endpoint: `${ZENDESK_BASE}/tickets/${ticket.id}.json`
-      });
-      // Don't block ticket creation if comment fails
-    }
-
-    // PHASE 4: AUTOMATIC TICKET TAGGING
+    // PHASE 3: AUTOMATIC TICKET TAGGING
     // Add chatbot_new_ticket tag to the ticket (existing functionality)
     try {
       console.log(`🏷️ Adding chatbot tag to ticket #${ticket.id}`);
@@ -247,13 +211,13 @@ app.post('/api/ticket', async (req, res) => {
       // Don't block ticket creation if tag fails
     }
 
-    // PHASE 4.5: CLICKED ARTICLES PRIVATE COMMENT
+    // PHASE 3.5: CLICKED ARTICLES PRIVATE COMMENT
     // Add private comment with clicked articles data if provided
     if (clickedArticles && clickedArticles.count > 0) {
       try {
         console.log(`📚 Adding private comment with ${clickedArticles.count} clicked articles to ticket #${ticket.id}`);
         
-        const articlesList = clickedArticles.articles.map((article, index) => 
+        const articlesList = clickedArticles.articles.map((article) => 
           `${article.index}. "${article.title}" - ${article.url} (Source: ${article.source}, Clicked: ${new Date(article.clickedAt).toLocaleString()})`
         ).join('\n');
         
@@ -301,7 +265,7 @@ This context may help agents understand what the user has already reviewed befor
       console.log(`📚 No clicked articles to add to ticket #${ticket.id}`);
     }
 
-    // PHASE 5: ENHANCED RESPONSE WITH SEARCH RESULTS
+    // PHASE 4: ENHANCED RESPONSE WITH SEARCH RESULTS
     // Return enhanced response with both ticket data and search results
     const enhancedResponse = {
       // Existing response format (maintains backward compatibility)
@@ -323,7 +287,6 @@ This context may help agents understand what the user has already reviewed befor
       features: {
         federatedSearch: true,
         autoTaging: true,
-        agentComment: true,
         clickedArticlesTracking: true
       }
     };
