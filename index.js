@@ -468,13 +468,17 @@ app.post('/api/ticket/:id/comment', async (req, res) => {
       console.log(`� ALTERNATIVE: Using ticket update API to add comment to ticket #${id}`);
       
       try {
+        // Handle both legacy format (message) and new format (ticket.comment)
+        const commentBody = message || req.body.ticket?.comment?.body;
+        const isPublic = req.body.ticket?.comment?.public !== false; // Default to true
+        
         const response = await axios.put(
           `${ZENDESK_BASE}/tickets/${id}.json`,
           {
             ticket: {
               comment: {
-                body: message,
-                public: true,
+                body: commentBody,
+                public: isPublic,
                 author_id: 43293699903763 // Use the requester ID as author
               }
             }
@@ -487,7 +491,23 @@ app.post('/api/ticket/:id/comment', async (req, res) => {
           }
         );
         console.log(`✅ ALTERNATIVE SUCCESS: Ticket update API worked`);
-        return res.json({ success: true, comment: response.data.ticket, method: 'ticket-update' });
+        
+        // FIXED: Return proper comment data structure instead of raw ticket data
+        const finalCommentBody = message || req.body.ticket?.comment?.body;
+        const finalIsPublic = req.body.ticket?.comment?.public !== false; // Default to true
+        
+        return res.json({ 
+          success: true, 
+          comment: {
+            id: `ticket-update-${Date.now()}`,
+            body: finalCommentBody,
+            public: finalIsPublic,
+            author_id: response.data.ticket?.requester_id || 'system',
+            created_at: new Date().toISOString(),
+            type: 'Comment'
+          },
+          method: 'ticket-update'
+        });
       } catch (updateErr) {
         console.log(`❌ ALTERNATIVE FAILED: Ticket update error:`, updateErr.response?.status, updateErr.response?.data);
         
@@ -923,6 +943,7 @@ app.get('/', (req, res) => {
       'POST /api/search-help-center - Search Help Center articles',
       'POST /api/search/federated - Unified search via MXchatbot API',
       'POST /api/ticket/:id/comment - Add comment to ticket',
+      'POST /api/ticket/:id/tags - Add custom tags to ticket',
       'GET /api/ticket/:id - Get ticket details and status',
       'GET /api/ticket/:id/comments - Get ticket comments',
       'POST /api/ticket/:id/solve - Close/solve ticket',
@@ -1400,6 +1421,82 @@ app.post('/api/ticket/:id/priority', async (req, res) => {
   }
 });
 
+// Add tags to ticket (generic tag endpoint)
+app.post('/api/ticket/:id/tags', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { tags, reason } = req.body;
+    
+    console.log(`🏷️ Adding tags to ticket #${id}:`, { tags, reason });
+    
+    // Validate input
+    if (!tags || !Array.isArray(tags) || tags.length === 0) {
+      return res.status(400).json({
+        error: 'Tags must be provided as a non-empty array',
+        provided: tags
+      });
+    }
+    
+    // Get current ticket to preserve existing tags
+    const ticketResponse = await axios.get(`${ZENDESK_BASE}/tickets/${id}.json`, {
+      headers: {
+        Authorization: `Basic ${AUTH}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    
+    const currentTags = ticketResponse.data.ticket.tags || [];
+    
+    // Merge current tags with new tags (avoid duplicates)
+    const uniqueTags = [...new Set([...currentTags, ...tags])];
+    
+    const updateData = {
+      ticket: {
+        tags: uniqueTags
+      }
+    };
+    
+    // Add comment if reason provided
+    if (reason) {
+      updateData.ticket.comment = {
+        body: `Tags added: ${tags.join(', ')}. Reason: ${reason}`,
+        public: false // Private comment for internal tracking
+      };
+    }
+    
+    const response = await axios.put(
+      `${ZENDESK_BASE}/tickets/${id}.json`,
+      updateData,
+      {
+        headers: {
+          Authorization: `Basic ${AUTH}`,
+          'Content-Type': 'application/json'
+        }
+      }
+    );
+    
+    console.log(`✅ Tags added to ticket #${id}:`, tags);
+    res.json({ 
+      success: true, 
+      ticket: response.data.ticket,
+      addedTags: tags,
+      allTags: uniqueTags,
+      reason: reason || 'No reason provided'
+    });
+    
+  } catch (err) {
+    console.error(`❌ Failed to add tags to ticket #${req.params.id}:`, {
+      error: err.message,
+      status: err.response?.status,
+      data: err.response?.data
+    });
+    res.status(500).json({ 
+      error: err.message,
+      details: err.response?.data || 'Tag addition failed'
+    });
+  }
+});
+
 // Add VIP tag to ticket
 app.post('/api/ticket/:id/vip', async (req, res) => {
   try {
@@ -1648,6 +1745,7 @@ app.listen(PORT, () => {
    
    🆕 NEW ADVANCED TICKET MANAGEMENT:
    GET  /api/ticket/:id/status-details - Get enhanced status (VIP, priority, escalation)
+   POST /api/ticket/:id/tags        - Add custom tags to ticket
    POST /api/ticket/:id/priority    - Update ticket priority
    POST /api/ticket/:id/vip         - Add VIP customer status
    POST /api/ticket/:id/escalate    - Escalate ticket with levels
